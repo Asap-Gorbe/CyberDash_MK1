@@ -104,7 +104,11 @@ yet.
 ---
 
 ## Milestone roadmap
-
+- [ ] **M5 - Concurrency cleanup.** Formalize networking on core 0 /
+  rendering+UI on core 1 with a thread-safe state hand-off (already
+  half-true today via the volatile lyric buffer - this milestone makes
+  it a proper pattern via `AppState`/`EventBus` instead of raw
+  volatiles). Extract `WifiManager`/`HttpClient` into `net/`.
 - [x] **M4 - Extract SpotifyService + state/event model. TESTED.** Moved
   all Spotify auth, LRCLIB fetching, JSON parsing, and lyric-sync
   timing out of `main.cpp` into `services/spotify/SpotifyService`.
@@ -144,7 +148,7 @@ yet.
 | Input method | **Still not finalized hardware-side** | Touch confirmed available on the LCD; buttons being considered as an addition. `hal/IInput` abstracts this either way - a `TouchInput` and/or `ButtonInput` backend can be added later with zero changes to `ScreenManager` or any screen. `SerialInput` (keyboard n/s/b) is the backend in use today for testing. |
 | Secrets storage | **Revised (M4)** | `Secrets.h` can only ever declare (`extern`), never define, credential values - the moment a second `.cpp` file includes a header that defines a global, the linker sees two definitions. Real values now live in gitignored `Secrets.cpp`; `Secrets.h` (declarations only) is safe to commit. |
 | State/event model | **Decided (M4)** | Roadmap called for "AppState + EventBus"; built as a version-counter instead of callback-based pub/sub - `AppState::music.version` increments on any real change, screens cache the version they last saw and redraw only when it differs. Same "services publish, screens observe" decoupling, no dynamic allocation or function-pointer tables. Revisit only if a future consumer genuinely needs push notification instead of a poll-and-compare check. |
-
+| Cross-core state safety | **Decided (M5)** | `AppState`'s public struct replaced with accessor functions (`setMusicTrack`/`setMusicLyricLine`/`getMusic`) wrapping a `portMUX_TYPE` spinlock - chosen over a full mutex/semaphore because critical sections here are a handful of field copies (microseconds), not blocking I/O. `getMusic()` returns a copy so callers never hold the lock while using the data. Same pattern applies to any future service (e.g. `NavigationService` in M6) that publishes state read cross-core. |
 ## Open questions / TODO before next milestones
 
 - [ ] **Security:** the Spotify client secret + refresh token that were in
@@ -185,6 +189,12 @@ yet.
   boots correctly, lyrics fetch/sync/display identically to pre-M2,
   terminal resize still adapts, no heap drift over an extended run.
 - **M1:** Initial working lyrics-in-serial-terminal proof of concept.
+- **M5 (tested):** Made `AppState::music` thread-safe - public struct
+  replaced with `setMusicTrack()`/`setMusicLyricLine()`/`getMusic()`
+  accessors protected by a spinlock. `SpotifyService` and `MusicScreen`
+  updated accordingly. Verified via functional regression, a 10-15min
+  soak test, and deliberate rapid-switching stress during track
+  transitions. `net/` extraction deferred to M6.
 - - **M4 (tested):** Extracted `services/spotify/SpotifyService` from
     `main.cpp` (auth, LRCLIB fetch, sync timing - logic unchanged, just
     relocated and encapsulated). Added `app/AppState` as the
