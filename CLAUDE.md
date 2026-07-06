@@ -105,87 +105,32 @@ yet.
 
 ## Milestone roadmap
 
-- [x] **M1 - Lyrics proof of concept.** ESP32 connects to Spotify, fetches
-  synced lyrics from LRCLIB, displays one centered line via raw ANSI
-  codes in the serial terminal. Sync is good enough for normal
-  listening. *(This was the starting point - the original monolithic
-  main.cpp.)*
-
-- [x] **M2 - Display bring-up + theme (software half). TESTED.** Built the
-  HAL (`IDisplay` interface), the `SerialDisplay` backend, `Renderer`,
-  and `Theme` tokens. Ported the existing lyric display through this
-  seam instead of raw ANSI calls. Spotify/lyrics logic itself is
-  *unchanged* - still monolithic in `main.cpp`, extraction into
-  `SpotifyService` is M4, not M2. Secrets moved out of `main.cpp` into
-  a gitignored `app/Secrets.h`; tunables consolidated into
-  `app/Config.h`.
-  Verified on device: clean build, correct boot sequence, WiFi + token
-  refresh unaffected, lyrics fetch/parse/sync/display identical to
-  pre-M2 behavior, terminal resize still adapts centering (confirms
-  `renderer.poll()` is wired to the throttle, not just firing once at
-  boot), no heap drift over an extended run.
-    - [ ] **M2-b - Real glass.** Once the display is physically wired: pick
-      driver library (TFT_eSPI most likely), confirm panel resolution +
-      controller chip, write `TftDisplay : public IDisplay`, swap it in
-      for `SerialDisplay` in `main.cpp`, and validate the type scale is
-      actually readable at a glance in the car. **Nothing above the HAL
-      layer should need to change for this step** - if it does, that's a
-      sign the `IDisplay` contract was drawn in the wrong place.
-
-- [x] **M3 - Screen framework + ScreenManager. TESTED.** Built `hal/IInput`
-  (abstract input contract, same shape as `IDisplay`) with a
-  `SerialInput` backend (keyboard: n/s/b -> Next/Select/Back) so
-  switching logic could be built and tested before touch/button
-  hardware is finalized. Built `ui/Screen` (abstract base class) and
-  `ui/ScreenManager`, which owns the active screen and routes input to
-  it. Three screens exist: `HomeScreen` (index 0, always in place after
-  Back), and stub `MusicScreen`/`NavScreen` that prove switching works
-  but don't yet show real lyrics/map (M4/M6). `main.cpp`'s `loop()` now
-  calls `screenManager.tick()` instead of drawing directly; the
-  existing lyric-sync tracking math keeps running in the background
-  (updating `currentLine`) even though nothing draws it yet — parked
-  for M4 to pick up via the state model, not deleted.
-  Verified on device: boot enters Home; n/n/n cycles Home->Music->Nav->
-  Home; b returns to Home from anywhere; s on Music reaches that
-  screen's handleInput() specifically; lyric fetch/parse logs keep
-  appearing normally in the background with nothing drawn (expected).
-    - **Bug found + fixed during testing:** initial version had
-      `ScreenManager::tick()` call `render()` on every loop iteration
-      (~150-200Hz), which on `SerialDisplay` meant a full ANSI clear+redraw
-      that many times a second - visibly glitchy, and log lines (e.g. the
-      Select-pressed message) would render then immediately get stomped by
-      the next redraw. Fixed by making `Screen::update()` return `bool`
-      (changed since last tick?) and having `ScreenManager` only call
-      `render()` on screen-enter/switch or when `update()` returns true.
-      This is the correct long-term shape, not a stopgap - it's what will
-      make M4's real `MusicScreen` redraw only when the lyric line actually
-      advances, not on every tick regardless of change.
-
-- [ ] **M4 - Extract SpotifyService + state/event model.** Pull the
-  Spotify/lyrics logic out of `main.cpp` into `services/spotify/`
-  behind a clean interface. Introduce `AppState` + `EventBus`. Music
-  screen observes state instead of calling Spotify code directly.
-  This is where the service/UI boundary gets proven on the one feature
-  already understood deeply - Navigation becomes a template-fill after
-  this.
-
-- [ ] **M5 - Concurrency cleanup.** Formalize networking on core 0 /
-  rendering+UI on core 1 with a thread-safe state hand-off (already
-  half-true today via the volatile lyric buffer - this milestone makes
-  it a proper pattern via `AppState`/`EventBus` instead of raw
-  volatiles). Extract `WifiManager`/`HttpClient` into `net/`.
-
-- [ ] **M6 - NavigationService + mini-map screen.** GPS behind the HAL,
-  `NavigationService`, GTA-V-style map rendering. Real test of the
-  whole architecture: if M2-M5 were done right, this should not touch
-  Music at all.
-
-- [ ] **M7+ - Leaf features.** Album art (image decode + PSRAM + caching),
-  playback controls (UI -> intent -> service path already exists by
-  this point), lyric/track caching (LittleFS), Settings screen,
-  additional screens. Each should land in exactly one place.
-
----
+- [x] **M4 - Extract SpotifyService + state/event model. TESTED.** Moved
+  all Spotify auth, LRCLIB fetching, JSON parsing, and lyric-sync
+  timing out of `main.cpp` into `services/spotify/SpotifyService`.
+  Added `app/AppState` (a version-counter-based observable, see
+  decisions log) as the boundary between the service and the UI.
+  `MusicScreen` is no longer a stub - it reads `AppState::music` and
+  redraws only when `.version` changes, reusing the exact mechanism
+  built (and bug-fixed) in M3.
+  Verified on device: full boot -> token refresh -> now-playing poll
+  -> lyrics fetch -> synced display chain working with live playback;
+  screen switching away from and back to Music shows correct current
+  state immediately (not stale).
+  - **Bugs found + fixed during this milestone** (see decisions log for
+    the two structural ones):
+    1. `Secrets.h` ODR violation once a second `.cpp` included it -
+       split into `Secrets.h` (extern declarations, committed) +
+       `Secrets.cpp` (real values, gitignored).
+    2. Typo in `AppState.cpp` (`Music Music;` instead of `Music music;`)
+      - case mismatch caused "undefined reference" at link time despite
+        both files compiling individually without error.
+    3. Missing initial `refreshAccessToken()` call when the token-refresh
+       logic moved into `networkTaskLoop()` - without it, the service ran
+       unauthenticated for up to 55 minutes after boot, producing a
+       `null`/`null` "track", a doomed lyrics search for it, and a task
+       watchdog crash. Fixed by calling `refreshAccessToken()` once,
+       unconditionally, before the task's `for(;;)` loop begins.
 
 ## Decisions log
 
@@ -197,6 +142,8 @@ yet.
 | Concurrency model | **Decided (M1, formalized M5)** | Networking on core 0, render/UI on core 1. Currently uses raw `volatile`s as the hand-off; M5 replaces this with `AppState`. |
 | Render invalidation | **Decided (M3)** | `Screen::update()` returns `bool` (changed this tick?); `ScreenManager` only calls `render()` on enter/switch or when `update()` is true. Render-every-tick was tried first and caused a visible glitch/flicker on `SerialDisplay` at ~150-200Hz. This dirty-flag approach is the one carried forward into the TFT backend, not revisited. |
 | Input method | **Still not finalized hardware-side** | Touch confirmed available on the LCD; buttons being considered as an addition. `hal/IInput` abstracts this either way - a `TouchInput` and/or `ButtonInput` backend can be added later with zero changes to `ScreenManager` or any screen. `SerialInput` (keyboard n/s/b) is the backend in use today for testing. |
+| Secrets storage | **Revised (M4)** | `Secrets.h` can only ever declare (`extern`), never define, credential values - the moment a second `.cpp` file includes a header that defines a global, the linker sees two definitions. Real values now live in gitignored `Secrets.cpp`; `Secrets.h` (declarations only) is safe to commit. |
+| State/event model | **Decided (M4)** | Roadmap called for "AppState + EventBus"; built as a version-counter instead of callback-based pub/sub - `AppState::music.version` increments on any real change, screens cache the version they last saw and redraw only when it differs. Same "services publish, screens observe" decoupling, no dynamic allocation or function-pointer tables. Revisit only if a future consumer genuinely needs push notification instead of a poll-and-compare check. |
 
 ## Open questions / TODO before next milestones
 
@@ -209,7 +156,9 @@ yet.
   added alongside it. Not blocking anymore (`IInput` abstracts it),
   but needs a `TouchInput`/`ButtonInput` backend written once decided.
 - [ ] Decide GPS module (blocks M6, not urgent yet).
-
+- [x] ~~Security: rotate Spotify credentials~~ - done; current
+  `Secrets.cpp` values have not been committed to git (verified via
+  `git check-ignore` before every push since the M2/M3 history reset).
 ## Conventions
 
 - New app-specific logic goes in `services/`, never directly in `ui/` or
@@ -236,3 +185,11 @@ yet.
   boots correctly, lyrics fetch/sync/display identically to pre-M2,
   terminal resize still adapts, no heap drift over an extended run.
 - **M1:** Initial working lyrics-in-serial-terminal proof of concept.
+- - **M4 (tested):** Extracted `services/spotify/SpotifyService` from
+    `main.cpp` (auth, LRCLIB fetch, sync timing - logic unchanged, just
+    relocated and encapsulated). Added `app/AppState` as the
+    service-to-UI boundary. `MusicScreen` now shows real synced lyrics.
+    Fixed a `Secrets.h` ODR violation (split into `.h`/`.cpp`), a
+    case-typo linker error in `AppState.cpp`, and a missing initial token
+    refresh that caused ~55 minutes of unauthenticated operation and a
+    watchdog crash on first boot after the extraction.
