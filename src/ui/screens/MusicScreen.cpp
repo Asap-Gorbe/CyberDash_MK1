@@ -10,21 +10,26 @@ void MusicScreen::onEnter() {
 void MusicScreen::onExit() {}
 
 bool MusicScreen::update() {
-    if (AppState::music.version == _lastSeenVersion) return false;  // nothing changed, skip the redraw
-    refresh();
+    AppState::MusicSnapshot snapshot = AppState::getMusic();
+    if (snapshot.version == _lastSeenVersion) return false;  // nothing changed, skip the redraw
+    refresh(snapshot);
     return true;
 }
 
 void MusicScreen::refresh() {
-    _lastSeenVersion = AppState::music.version;
+    refresh(AppState::getMusic());
+}
 
-    if (!AppState::music.playing) {
+void MusicScreen::refresh(const AppState::MusicSnapshot& snapshot) {
+    _lastSeenVersion = snapshot.version;
+
+    if (!snapshot.playing) {
         _displayText = "MUSIC (waiting for playback...)";
-    } else if (AppState::music.currentLyricLine.length() > 0) {
-        _displayText = AppState::music.currentLyricLine;
-    } else if (AppState::music.track.length() > 0) {
+    } else if (snapshot.currentLyricLine.length() > 0) {
+        _displayText = snapshot.currentLyricLine;
+    } else if (snapshot.track.length() > 0) {
         // Playing, but no synced line yet — instrumental gap, or no match found.
-        _displayText = AppState::music.artist + " - " + AppState::music.track;
+        _displayText = snapshot.artist + " - " + snapshot.track;
     } else {
         _displayText = "MUSIC (waiting for playback...)";
     }

@@ -358,17 +358,9 @@ void SpotifyService::networkTaskLoop() {
                     Serial.println("\n>>> " + np.track + " - " + np.artist);
                     getLyrics(np.track, np.artist, np.duration_ms);
                 }
-
-                // Publish track/artist/playing whenever they change, so
-                // MusicScreen can show "now playing" info even before the
-                // first lyric line lands. tick() (core 1) owns writing
-                // currentLyricLine — this task never touches that field,
-                // so the two cores aren't racing on the same member.
-                if (trackChanged || AppState::music.playing != np.is_playing) {
-                    AppState::music.track   = np.track;
-                    AppState::music.artist  = np.artist;
-                    AppState::music.playing = np.is_playing;
-                    AppState::music.version++;
+                AppState::MusicSnapshot current = AppState::getMusic();
+                if (trackChanged || current.playing != np.is_playing ) {
+                    AppState::setMusicTrack(np.track,np.artist,np.is_playing);
                 }
             }
         }
@@ -393,8 +385,7 @@ void SpotifyService::tick() {
 
         if (idx >= 0 && idx != _currentLine) {
             _currentLine = idx;
-            AppState::music.currentLyricLine = _lyricText[_currentLine];
-            AppState::music.version++;   // this is what tells MusicScreen "redraw me"
+            AppState::setMusicLyricLine(_lyricText[_currentLine]);
         }
     }
 }

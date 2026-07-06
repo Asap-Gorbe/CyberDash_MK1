@@ -1,12 +1,15 @@
 #pragma once
 #include <Arduino.h>
 namespace AppState {
-struct Music {
-    String track = "";
-    String artist = "";
-    String currentLyricLine = "";
-    bool playing = false;
-    unsigned long version = 0 ;
+struct MusicSnapshot {
+    String track ;
+    String artist ;
+    String currentLyricLine ;
+    bool playing ;
+    unsigned long version ;
 };
-extern Music music;
+    void setMusicTrack(const String& track, const String& artist, bool playing);
+    void setMusicLyricLine(const String& line);
+    MusicSnapshot getMusic();
+
 }
