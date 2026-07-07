@@ -13,6 +13,8 @@
 #include "ui/screens/NavScreen.h"
 #include "services/spotify/SpotifyService.h"
 SerialDisplay display;
+#include "hal/SimulatedBleNavSource.h"
+#include "services/nav/NavigationService.h"
 Renderer renderer(display);
 
 SerialInput input;
@@ -22,7 +24,8 @@ NavScreen navScreen;
 Screen* screens[] = { &homeScreen, &musicScreen, &navScreen };  // index 0 = Home, by convention
 ScreenManager screenManager(renderer, input, screens, 3);
 SpotifyService spotifyService;
-
+SimulatedBleNavSource navSource;
+NavigationService navigationService(navSource);
 
 
 
@@ -45,6 +48,7 @@ void setup() {
   renderer.begin();
   screenManager.begin();
   spotifyService.begin();  // starts its own background task; handles its own initial token fetch internally
+  navigationService.begin();
 }
 
 // loop() runs on core 1 and does ONLY the advancer — it never blocks on the network
@@ -52,5 +56,6 @@ void loop() {
   renderer.poll();
   screenManager.tick();
   spotifyService.tick();
+  navigationService.tick();
   delay(5);
 }
