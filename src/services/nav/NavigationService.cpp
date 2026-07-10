@@ -8,12 +8,14 @@ void NavigationService::begin() {
 namespace {
     bool navDataChanged(const NavData& a, const NavData& b) {
         return a.valid != b.valid ||
+               a.active != b.active ||
+               a.isNavigation != b.isNavigation ||
                a.eta != b.eta ||
-               a.minutesRemaining != b.minutesRemaining ||
-               a.distanceRemainingM != b.distanceRemainingM ||
-               a.destination != b.destination ||
-               a.currentStreet != b.currentStreet ||
-               a.nextTurnDistanceM != b.nextTurnDistanceM;
+               a.duration != b.duration ||
+               a.distance != b.distance ||
+               a.title != b.title ||
+               a.directions != b.directions ||
+               a.speed != b.speed;
     }
 }  // namespace
 
@@ -26,12 +28,14 @@ void NavigationService::tick() {
     _lastPublished = data;
 
     AppState::NavSnapshot snapshot;
+    snapshot.active = data.active;
+    snapshot.isNavigation = data.isNavigation;
     snapshot.eta = data.eta;
-    snapshot.minutesRemaining = data.minutesRemaining;
-    snapshot.distanceRemainingM = data.distanceRemainingM;
-    snapshot.destination = data.destination;
-    snapshot.currentStreet = data.currentStreet;
-    snapshot.nextTurnDistanceM = data.nextTurnDistanceM;
+    snapshot.duration = data.duration;
+    snapshot.distance = data.distance;
+    snapshot.title = data.title;
+    snapshot.directions = data.directions;
+    snapshot.speed = data.speed;
     snapshot.valid = data.valid;
     // .version is assigned inside AppState::setNav() itself, not here
 

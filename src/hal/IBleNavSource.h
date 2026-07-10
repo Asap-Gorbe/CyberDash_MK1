@@ -1,13 +1,15 @@
 #pragma once
 #include <Arduino.h>
 struct NavData {
-    String eta;               // e.g. "14:32"
-    int minutesRemaining = 0;
-    int distanceRemainingM = 0;
-    String destination;
-    String currentStreet;
-    int nextTurnDistanceM = -1;  // -1 means "not available" — mirrors the source app's N/A case
-    bool valid = false;          // false until at least one real update has arrived
+    bool active = false;        // true while turn-by-turn nav is running on the phone
+    bool isNavigation = false;  // true = real turn-by-turn data; Chronos can push
+    String eta;                 // e.g. "14:32"
+    String duration;            // e.g. "12 min"
+    String distance;            // distance remaining to destination, e.g. "1.2 km"
+    String title;                // dual-purpose per Chronos docs (next-point distance
+    String directions;          // current street / turn instruction text
+    String speed;                // may be blank depending on the source app
+    bool valid = false;
 };
 class IBleNavSource {
 public:

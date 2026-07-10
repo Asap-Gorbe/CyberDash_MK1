@@ -16,12 +16,14 @@ namespace AppState {
     MusicSnapshot getMusic();
 
     struct NavSnapshot {
+        bool active = false;
+        bool isNavigation = false;
         String eta;
-        int minutesRemaining = 0;
-        int distanceRemainingM = 0;
-        String destination;
-        String currentStreet;
-        int nextTurnDistanceM = -1;
+        String duration;
+        String distance;
+        String title;
+        String directions;
+        String speed;
         bool valid = false;
         unsigned long version = 0;
     };

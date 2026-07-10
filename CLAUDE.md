@@ -23,9 +23,9 @@ screen at a time.
    planning once a live map turned out to require either a dedicated GPS
    module (no native heading, weak antenna, extra hardware) or raw
    position relay from a phone (undermines the standalone-device goal).
-   A turn-by-turn HUD relayed from a phone's Google Maps notifications
-   avoids both: the phone does routing/rerouting (the hard part), the
-   ESP32 only ever receives the result of one maneuver.
+   A turn-by-turn HUD relayed from a phone via the Chronos app avoids
+   both: the phone does routing/rerouting (the hard part), the ESP32
+   only ever receives the result of one maneuver.
 
 ## Design goals (non-negotiable — check new code against these)
 
@@ -95,7 +95,7 @@ cyberdeck-firmware/
       SerialInput.h/.cpp      (today's backend - keyboard n/s/b)
       IBleNavSource.h         (abstract nav data source contract)
       SimulatedBleNavSource.h/.cpp  (today's backend - fake moving route)
-      (RealBleNavSource.h/.cpp goes here once CarPlayBLE is forked - M6 real-hardware step)
+      (RealBleNavSource.h/.cpp goes here once wired to ChronosESP32 - M6 real-hardware step)
     gfx/
       Theme.h                 (palette, type scale, spacing tokens)
       Renderer.h               (draw primitives above IDisplay)
@@ -117,29 +117,76 @@ yet.
 ---
 
 ## Milestone roadmap
+- [ ] **Home screen: clock + now-playing. IN PROGRESS, PENDING FINAL
+  VERIFICATION.** `HomeScreen` is no longer a stub - it's the
+  device's actual idle screen: NTP-synced time (`hal/Clock`, no
+  interface - single real implementation) plus a compact
+  now-playing summary read from `AppState::music`.
+  Required a real fix to the render pipeline: `SerialDisplay`
+  previously cleared the screen on every single `drawText()` call,
+  which only worked because no screen had ever needed two lines at
+  once before. `Renderer::clear()` was replaced with `beginFrame()`
+  (called once per `render()`, not once per line) to support this.
+  Found and fixed two real bugs surfaced by this work:
+    1. `MusicScreen` fell back to showing artist/track during
+       instrumental gaps instead of going blank, because
+       `currentLyricLine.length() == 0` was indistinguishable from
+       "no synced lyrics exist at all." Added
+       `AppState::MusicSnapshot.hasSyncedLyrics` to disambiguate.
+    2. `SpotifyService` logged "Nothing playing" on every 2s poll
+       (not just once), and worse - `AppState::music` never actually
+       got told playback stopped, since that update path only ran
+       inside `if (np.valid)`, which a 204 "nothing playing" response
+       never sets. Home/Music screens were stuck showing the last
+       song indefinitely. Fixed via a `NowPlaying.nothingPlaying`
+       flag, acted on only on the actual playing->not-playing
+       transition.
+       A third issue - both lines requiring a scroll to see - turned out
+       to be `SpotifyService`'s background-task log lines (plain
+       `Serial.println()`) scrolling the terminal viewport out from
+       under `SerialDisplay`'s absolute-positioned rows on every poll.
+       Fixed by switching `SerialDisplay` to the ANSI alternate screen
+       buffer (`\033[?1049h`) - a fixed, non-scrolling grid, same
+       mechanism `vim`/`htop`/`less` use.
+       **Still open:** `HomeScreen` currently uses fixed top-row layout
+       as an interim workaround, not true vertical centering - revert
+       pinned until the alt-screen-buffer fix is verified on device AND
+       real LCD hardware (M2-b) exists, since pixel-coordinate centering
+       on real glass won't have the terminal-height-unreliability problem
+       that motivated the workaround. Not yet re-tested end-to-end since
+       the alt-screen-buffer fix specifically.
 - [ ] **M6 - NavigationService + turn-by-turn HUD. SKELETON TESTED,
   REAL HARDWARE PENDING.** Built `hal/IBleNavSource` (same shape as
   `IDisplay`/`IInput`) with a `SimulatedBleNavSource` backend, so
   `NavigationService`/`AppState::nav`/`NavScreen` could be built and
-  tested before forking the real Android app. `NavigationService`
-  polls its source once per `loop()` tick (no background task needed
-  - `poll()` is non-blocking by contract) and only publishes to
-  `AppState::nav` when data actually changed. `NavScreen` is no
-  longer a stub - shows upcoming turn+distance, or street+ETA when
-  no turn is pending.
+  tested before the real phone-side integration existed.
+  `NavigationService` polls its source once per `loop()` tick (no
+  background task needed - `poll()` is non-blocking by contract) and
+  only publishes to `AppState::nav` when data actually changed.
+  `NavScreen` is no longer a stub - shows whatever nav text is
+  currently available.
   Verified against the simulator: moving/cycling route data, no
   flicker, correct state on screen switch-away-and-back,
   Music/Nav independence (separate `navMux`/`musicMux` locks),
   Select handling.
-    - [ ] **M6 real-hardware step - pending.** Fork `appleshaman/CarPlayBLE`
-      (Android app reads Google Maps navigation notifications via
-      NotificationListenerService, forwards over BLE; ESP32 acts as
-      GATT server, phone as client). Extract the fork's actual GATT
-      service/characteristic UUIDs and payload format from its
-      `CarPlay-TTGO` source. Write `RealBleNavSource : public
-        IBleNavSource` using `NimBLE-Arduino`, matching that protocol
-      exactly. Swap it in for `SimulatedBleNavSource` in `main.cpp` -
-      by design, nothing above `IBleNavSource` should need to change.
+  Nav data source and `NavData`/`NavSnapshot` shape were both revised
+  mid-milestone - see decisions log ("Navigation data source" and
+  "NavData/NavSnapshot shape"). `pio run` confirmed clean after the
+  reshape; the simulator and `NavScreen` build against the new string
+  fields.
+    - [ ] **M6 real-hardware step - pending.** Add
+      `fbiego/ChronosESP32` to `platformio.ini` (pulls in `ESP32Time`
+      and `NimBLE-Arduino` automatically via its own `library.json`).
+      Install the Chronos app (Android, v3.7.5+ for nav support) on a
+      test phone. Write `RealBleNavSource : public IBleNavSource`
+      wrapping `ChronosESP32::getNavigation()`, gated on
+      `Navigation.isNavigation` so non-nav Chronos traffic (weather,
+      notifications, etc. - the library isn't nav-only) never reaches
+      `AppState::nav`. Swap it in for `SimulatedBleNavSource` in
+      `main.cpp` - by design, nothing above `IBleNavSource` should
+      need to change. Watch real BLE payloads during an actual drive
+      before writing any real branching logic around `title`, whose
+      exact meaning is documented as dual-purpose/app-dependent.
 - [ ] **M5 - Concurrency cleanup.** Formalize networking on core 0 /
   rendering+UI on core 1 with a thread-safe state hand-off (already
   half-true today via the volatile lyric buffer - this milestone makes
@@ -157,20 +204,20 @@ yet.
   -> lyrics fetch -> synced display chain working with live playback;
   screen switching away from and back to Music shows correct current
   state immediately (not stale).
-  - **Bugs found + fixed during this milestone** (see decisions log for
-    the two structural ones):
-    1. `Secrets.h` ODR violation once a second `.cpp` included it -
-       split into `Secrets.h` (extern declarations, committed) +
-       `Secrets.cpp` (real values, gitignored).
-    2. Typo in `AppState.cpp` (`Music Music;` instead of `Music music;`)
-      - case mismatch caused "undefined reference" at link time despite
-        both files compiling individually without error.
-    3. Missing initial `refreshAccessToken()` call when the token-refresh
-       logic moved into `networkTaskLoop()` - without it, the service ran
-       unauthenticated for up to 55 minutes after boot, producing a
-       `null`/`null` "track", a doomed lyrics search for it, and a task
-       watchdog crash. Fixed by calling `refreshAccessToken()` once,
-       unconditionally, before the task's `for(;;)` loop begins.
+    - **Bugs found + fixed during this milestone** (see decisions log for
+      the two structural ones):
+        1. `Secrets.h` ODR violation once a second `.cpp` included it -
+           split into `Secrets.h` (extern declarations, committed) +
+           `Secrets.cpp` (real values, gitignored).
+        2. Typo in `AppState.cpp` (`Music Music;` instead of `Music music;`)
+        - case mismatch caused "undefined reference" at link time despite
+          both files compiling individually without error.
+        3. Missing initial `refreshAccessToken()` call when the token-refresh
+           logic moved into `networkTaskLoop()` - without it, the service ran
+           unauthenticated for up to 55 minutes after boot, producing a
+           `null`/`null` "track", a doomed lyrics search for it, and a task
+           watchdog crash. Fixed by calling `refreshAccessToken()` once,
+           unconditionally, before the task's `for(;;)` loop begins.
 
 ## Decisions log
 
@@ -185,9 +232,16 @@ yet.
 | Secrets storage | **Revised (M4)** | `Secrets.h` can only ever declare (`extern`), never define, credential values - the moment a second `.cpp` file includes a header that defines a global, the linker sees two definitions. Real values now live in gitignored `Secrets.cpp`; `Secrets.h` (declarations only) is safe to commit. |
 | State/event model | **Decided (M4)** | Roadmap called for "AppState + EventBus"; built as a version-counter instead of callback-based pub/sub - `AppState::music.version` increments on any real change, screens cache the version they last saw and redraw only when it differs. Same "services publish, screens observe" decoupling, no dynamic allocation or function-pointer tables. Revisit only if a future consumer genuinely needs push notification instead of a poll-and-compare check. |
 | Cross-core state safety | **Decided (M5)** | `AppState`'s public struct replaced with accessor functions (`setMusicTrack`/`setMusicLyricLine`/`getMusic`) wrapping a `portMUX_TYPE` spinlock - chosen over a full mutex/semaphore because critical sections here are a handful of field copies (microseconds), not blocking I/O. `getMusic()` returns a copy so callers never hold the lock while using the data. Same pattern applies to any future service (e.g. `NavigationService` in M6) that publishes state read cross-core. |
-| Navigation data source | **Decided (M6)** | Rejected both a dedicated GPS module (no native heading, weak antenna, extra hardware/cost) and raw phone-GPS relay (undermines the standalone-device design goal - phone must stay paired/awake, new BLE/OS-permission failure modes). Settled on forking `appleshaman/CarPlayBLE`: a phone app reads Google Maps' navigation notification (ETA, distance, street, next turn) via NotificationListenerService and relays it over BLE. Phone does routing/rerouting; ESP32 only ever receives the result of one maneuver - smaller, more robust payload than continuous GPS. Known fragility: depends on Google Maps' notification format not changing; proof-of-concept grade, not an official integration. |
-| Nav feature scope | **Revised (M6)** | Original spec was a GTA V-style live mini-map. Replaced with a turn-by-turn HUD (arrow/distance/street/ETA) since the chosen data source (see above) provides discrete maneuver events, not a continuous position stream - there's no coordinate data to draw a moving map from. Arguably a better in-car display regardless (big clear instruction vs. a tiny moving dot), but a deliberate, real change from the original goal, not an accidental scope-narrowing. |
+| Navigation data source | **Revised (M6)** | Rejected both a dedicated GPS module (no native heading, weak antenna, extra hardware/cost) and raw phone-GPS relay (undermines the standalone-device design goal - phone must stay paired/awake, new BLE/OS-permission failure modes). Originally planned to fork `appleshaman/CarPlayBLE` (reverse-engineer GATT UUIDs/payload from a single-dev proof-of-concept). Switched to `fbiego/ChronosESP32`: a maintained, MIT-licensed library + official Chronos app implementing the identical ESP32-as-GATT-server/phone-as-client shape, but with the protocol already built and documented rather than extracted by hand. Same tradeoff as before versus GPS (phone does routing, ESP32 gets the result of one maneuver), lower integration risk than the fork plan. |
+| NavData/NavSnapshot shape | **Decided (M6)** | ChronosESP32's `Navigation` struct hands back pre-formatted strings (`eta`, `duration`, `distance`, `title`, `directions`, `speed`), not raw numeric distances - the phone-side app formats them before sending. Reshaped `IBleNavSource::NavData` and `AppState::NavSnapshot` to store those strings directly rather than parsing them back into ints (`distanceRemainingM`/`nextTurnDistanceM` dropped). Same "data-source-first" principle as the mini-map -> HUD scope revision. `title`'s exact semantics are documented as dual-purpose ("distance to next point OR title") and app-dependent - `NavScreen`'s interpretation of it is deliberately left minimal until real BLE traffic from a live drive can confirm what it actually contains. |
+| Nav feature scope | **Revised (M6)** | Original spec was a GTA V-style live mini-map. Replaced with a turn-by-turn HUD (instruction/distance/ETA) since the chosen data source (see above) provides discrete maneuver events, not a continuous position stream - there's no coordinate data to draw a moving map from. Arguably a better in-car display regardless (big clear instruction vs. a tiny moving dot), but a deliberate, real change from the original goal, not an accidental scope-narrowing. |
 | NavigationService concurrency | **Decided (M6)** | Unlike `SpotifyService`, `NavigationService` has no background FreeRTOS task - `IBleNavSource::poll()` is contractually non-blocking (even the real NimBLE backend would buffer internally via its own task and just hand back the latest value), so polling once per `loop()` tick on core 1 is sufficient. Simpler than replicating `SpotifyService`'s core-0 task pattern where it isn't needed. |
+| Wall clock | **Decided** | NTP via `configTzTime()`, wrapped in `hal/Clock` - deliberately NOT built as a swappable interface like `IDisplay`/`IInput`/`IBleNavSource`. Only one real implementation is worth having (the system clock); an abstraction here would be complexity with no payoff, same reasoning as M5's spinlock-over-mutex choice. Timezone is a manually-set POSIX TZ string in `Config::Timezone`, not auto-detected. |
+| Home screen identity | **Decided** | Home IS the clock/idle face (time as hero element + compact now-playing summary), not a separate menu screen with a clock bolted on. Full live lyrics stay `MusicScreen`'s job - Home only ever shows a one-line summary, keeping "one purpose per screen" intact even though both read `AppState::music`. |
+| SerialDisplay + background logging | **Fixed** | Plain `Serial.println()` calls from background tasks (`SpotifyService`) share the same serial stream as `SerialDisplay`'s absolute-positioned ANSI output. Normal terminal scrolling from those log lines was pushing fixed-row content out of the visible viewport. Fixed via the ANSI alternate screen buffer, enabled once in `SerialDisplay::begin()`. This whole class of problem is specific to sharing one stream for both logs and "screen" output - it goes away entirely once a real TFT exists in M2-b (logs to serial, UI to the physical panel, no shared channel). |
+| Font direction | **Noted, not yet built** | Dot-matrix/LED-style typeface intended (visually in the spirit of Nothing's Ndot font family, NOT using their proprietary asset - the genre predates them and has open alternatives). Purely a HAL-backend concern per `Theme::TextSize` - irrelevant to `SerialDisplay`, real work starts at M2-b once a pixel display with custom bitmap font support exists. |
+| Retro animations | **Noted, not yet built** | Mentioned as a future direction for `HomeScreen`/idle-screen polish. No design work done yet - flagged here purely so it isn't forgotten between now and whenever `ui/components` gets built out. |
+
 ## Open questions / TODO before next milestones
 
 - [ ] **Security:** the Spotify client secret + refresh token that were in
@@ -202,11 +256,22 @@ yet.
 - [x] ~~Security: rotate Spotify credentials~~ - done; current
   `Secrets.cpp` values have not been committed to git (verified via
   `git check-ignore` before every push since the M2/M3 history reset).
-- [ ] Fork `appleshaman/CarPlayBLE`, extract real GATT UUIDs/payload
-  format from `CarPlay-TTGO` source (blocks `RealBleNavSource`).
-- [ ] Test `RealBleNavSource` against an actual phone once forked and
-  wired - simulator testing only proves the architecture, not real
-  BLE behavior (connection drops, pairing, payload edge cases).
+- [ ] Add `fbiego/ChronosESP32` to `platformio.ini`, install the
+  Chronos app (Android, v3.7.5+ for nav support) on a test phone.
+- [ ] Write `RealBleNavSource : public IBleNavSource` wrapping
+  `ChronosESP32::getNavigation()`, gated on `isNavigation` so
+  non-nav Chronos traffic never reaches `AppState::nav`.
+- [ ] Watch real BLE payloads during an actual drive to pin down
+  `title`'s real meaning (documented as dual-purpose/app-dependent)
+  before writing any branching logic in `NavScreen` around it.
+- [ ] Test `RealBleNavSource` against an actual phone - simulator
+  testing only proves the architecture, not real BLE behavior
+  (connection drops, pairing, payload edge cases).
+- [ ] Re-test `HomeScreen` + multi-line rendering end-to-end since the
+  alt-screen-buffer fix - not yet confirmed working.
+- [ ] Revert `HomeScreen` from fixed top-row layout back to true
+  vertical centering - pinned until real LCD hardware exists (M2-b).
+
 ## Conventions
 
 - New app-specific logic goes in `services/`, never directly in `ui/` or
@@ -217,15 +282,31 @@ yet.
   screen header from `hal/`, stop - that's the dependency rule breaking.
 
 ## Changelog
+- **M6 (nav data source revised, pre-real-hardware):** Switched planned
+  nav BLE source from a CarPlayBLE fork to `fbiego/ChronosESP32` (see
+  decisions log). Reshaped `IBleNavSource::NavData` and
+  `AppState::NavSnapshot` from numeric fields to the string fields
+  ChronosESP32 actually provides; updated `NavigationService`,
+  `SimulatedBleNavSource`, and `NavScreen` accordingly and confirmed
+  `pio run` clean. `NavScreen`'s new field-reading logic is
+  intentionally minimal, pending real BLE traffic. `RealBleNavSource`
+  itself not yet written.
+- **Home screen (in progress):** `hal/Clock` added (NTP, manual
+  timezone). Multi-line render support added (`beginFrame()` replacing
+  per-call clearing). `HomeScreen` no longer a stub. Fixed instrumental
+  gaps incorrectly showing artist/track instead of going blank (new
+  `hasSyncedLyrics` field), fixed "Nothing playing" log spam and
+  `AppState::music` never learning playback stopped, fixed terminal
+  scrolling desyncing fixed-row layout (alternate screen buffer). Not
+  yet fully re-verified on device; centering revert pinned until real
+  LCD hardware.
 - **M6 (skeleton tested, real hardware pending):** Added
   `hal/IBleNavSource` + `SimulatedBleNavSource`, extended `AppState`
   with a `nav` block (same accessor+spinlock pattern as M5's `music`
   block, separate lock), added `NavigationService`, `NavScreen` no
   longer a stub. Verified against the simulator only. Nav feature
   spec revised from "GTA V mini-map" to "turn-by-turn HUD" (see
-  decisions log) - relies on forking `appleshaman/CarPlayBLE` for real
-  data, which is the next step before this milestone can be marked
-  fully tested.
+  decisions log).
 - **M5 (tested):** Made `AppState::music` thread-safe - public struct
   replaced with `setMusicTrack()`/`setMusicLyricLine()`/`getMusic()`
   accessors protected by a spinlock. `SpotifyService` and `MusicScreen`

@@ -13,23 +13,28 @@ NavData SimulatedBleNavSource::poll() {
 
     NavData data;
     data.valid = true;
-    data.destination = "Home";
+    data.active = true;
+    data.isNavigation = true;
     data.eta = "14:32";
-    data.minutesRemaining = 12;
-    data.distanceRemainingM = 4200 - (_step * 10);
-    if (data.distanceRemainingM < 0) data.distanceRemainingM = 4200;  // loop back around
+    data.duration = "12 min";
+
+    int remainingM = 4200 - (_step * 10);
+    if (remainingM < 0) remainingM = 4200;  // loop back around
+    data.distance = String(remainingM / 1000.0, 1) + " km";
+
     int cycle = (_step / 20) % 3;
     if (cycle == 0) {
-        data.currentStreet = "Moenckebergstrasse";
-        data.nextTurnDistanceM = 200 - ((_step % 20) * 10);
+        data.directions = "Moenckebergstrasse";
+        int turnM = 200 - ((_step % 20) * 10);
+        data.title = String(turnM > 0 ? turnM : 0) + " m";
     } else if (cycle == 1) {
-        data.currentStreet = "Steinstrasse";
-        data.nextTurnDistanceM = 150 - ((_step % 20) * 7);
+        data.directions = "Steinstrasse";
+        int turnM = 150 - ((_step % 20) * 7);
+        data.title = String(turnM > 0 ? turnM : 0) + " m";
     } else {
-        data.currentStreet = "Moenckebergstrasse";
-        data.nextTurnDistanceM = -1;  // no turn coming up right now
+        data.directions = "Moenckebergstrasse";
+        data.title = "";  // no turn coming up right now
     }
-    if (data.nextTurnDistanceM < 0 && cycle != 2) data.nextTurnDistanceM = 0;
 
     return data;
 }

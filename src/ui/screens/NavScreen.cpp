@@ -24,13 +24,15 @@ void NavScreen::refresh(const AppState::NavSnapshot& snapshot) {
 
     if (!snapshot.valid) {
         _displayText = "NAV (waiting for phone...)";
-    } else if (snapshot.nextTurnDistanceM >= 0) {
-        // A turn is coming up — that's the single most useful thing to
-        // show while driving, ahead of ETA or destination.
-        _displayText = "-> " + String(snapshot.nextTurnDistanceM) + "m " + snapshot.currentStreet;
+    } else if (snapshot.directions.length() > 0) {
+        // Deliberately dumb for the first bench test — just surface whatever
+        // text arrived. `title`'s exact meaning is app-dependent per Chronos's
+        // own docs; real branching logic waits for a real drive's BLE traffic.
+        _displayText = snapshot.directions;
+    } else if (snapshot.title.length() > 0) {
+        _displayText = snapshot.title;
     } else {
-        // No turn pending — show where we are and when we'll arrive instead.
-        _displayText = snapshot.currentStreet + " (ETA " + snapshot.eta + ")";
+        _displayText = "ETA " + snapshot.eta;
     }
 }
 
