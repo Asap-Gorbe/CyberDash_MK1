@@ -10,11 +10,12 @@ namespace AppState {
         portMUX_TYPE navMux = portMUX_INITIALIZER_UNLOCKED;
     }
 
-    void setMusicTrack(const String& track, const String& artist, bool playing) {
+    void setMusicTrack(const String& track, const String& artist, bool playing, bool hasSyncedLyrics) {
         portENTER_CRITICAL(&musicMux);
         musicState.track = track;
         musicState.artist = artist;
         musicState.playing = playing;
+        musicState.hasSyncedLyrics = hasSyncedLyrics;
         musicState.version++;
         portEXIT_CRITICAL(&musicMux);
     }

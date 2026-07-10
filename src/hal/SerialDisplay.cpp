@@ -2,7 +2,8 @@
 #include "SerialDisplay.h"
 
 void SerialDisplay::begin() {
-    Serial.print("\033[?25l");  // hide cursor
+    Serial.print("\033[?1049h");  // hide cursor
+    Serial.print("\033[?25l");
     queryTermSize();
 }
 
@@ -18,7 +19,6 @@ void SerialDisplay::drawText(int x, int y, const String& text, int size, TextAli
     Serial.print("\033[2J");
 
     if (text.length() == 0) {
-        Serial.print("\033[H");
         return;
     }
 

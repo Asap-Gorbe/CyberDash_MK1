@@ -25,18 +25,17 @@ void MusicScreen::refresh(const AppState::MusicSnapshot& snapshot) {
 
     if (!snapshot.playing) {
         _displayText = "MUSIC (waiting for playback...)";
-    } else if (snapshot.currentLyricLine.length() > 0) {
-        _displayText = snapshot.currentLyricLine;
-    } else if (snapshot.track.length() > 0) {
-        // Playing, but no synced line yet — instrumental gap, or no match found.
+    } else if (!snapshot.hasSyncedLyrics) {
         _displayText = snapshot.artist + " - " + snapshot.track;
     } else {
-        _displayText = "MUSIC (waiting for playback...)";
+        _displayText = snapshot.currentLyricLine;
     }
 }
 
 void MusicScreen::render(Renderer& renderer) {
+    renderer.beginFrame();
     renderer.drawCentered(renderer.height() / 2, _displayText, Theme::TextSize::Hero);
+
 }
 
 bool MusicScreen::handleInput(InputEvent event) {

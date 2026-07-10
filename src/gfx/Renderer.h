@@ -7,8 +7,8 @@ public:
     explicit Renderer(IDisplay& display) : _display(display) {}
 
     void begin() { _display.begin(); }
-    void clear() { _display.clear(); }
     void poll()  { _display.poll(); }
+    void beginFrame() { _display.clear(); }
 
     void drawCentered(int row, const String& text, Theme::TextSize size = Theme::TextSize::Hero) {
         _display.drawText(0, row, text, static_cast<int>(size), TextAlign::Center);

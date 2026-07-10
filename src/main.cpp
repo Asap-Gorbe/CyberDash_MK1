@@ -12,6 +12,7 @@
 #include "ui/screens/MusicScreen.h"
 #include "ui/screens/NavScreen.h"
 #include "services/spotify/SpotifyService.h"
+#include "hal/Clock.h"
 SerialDisplay display;
 #include "hal/SimulatedBleNavSource.h"
 #include "services/nav/NavigationService.h"
@@ -45,6 +46,7 @@ void setup() {
     delay(500);
   }
   Serial.println("\nConnected! IP: " + WiFi.localIP().toString());
+  Clock::begin();  // NTP sync starts here — WiFi must already be connected
   renderer.begin();
   screenManager.begin();
   spotifyService.begin();  // starts its own background task; handles its own initial token fetch internally

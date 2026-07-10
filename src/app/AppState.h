@@ -8,10 +8,10 @@ namespace AppState {
         String artist;
         String currentLyricLine;
         bool playing;
+        bool hasSyncedLyrics;  // false if no synced lyrics were found for this track
         unsigned long version;
     };
-
-    void setMusicTrack(const String& track, const String& artist, bool playing);
+    void setMusicTrack(const String& track, const String& artist, bool playing, bool hasSyncedLyrics);
     void setMusicLyricLine(const String& line);
     MusicSnapshot getMusic();
 

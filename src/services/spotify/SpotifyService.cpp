@@ -164,9 +164,7 @@ bool SpotifyService::refreshAccessToken() {
 }
 
 SpotifyService::NowPlaying SpotifyService::getNowPlaying() {
-    NowPlaying np = {"", "", 0, 0, 0, false, false};
-
-    _client.setInsecure();
+NowPlaying np = {"", "", 0, 0, 0, false, false, false};    _client.setInsecure();
     if (!_client.connect("api.spotify.com", 443)) {
         Serial.println("[Spotify] API connection failed");
         return np;
@@ -182,8 +180,8 @@ SpotifyService::NowPlaying SpotifyService::getNowPlaying() {
     String statusLine = skipHeaders(_client);
 
     if (statusLine.indexOf("204") > 0) {
-        Serial.println("[Spotify] Nothing playing");
         _client.stop();
+        np.nothingPlaying = true ;
         return np;
     }
     if (statusLine.indexOf("401") > 0) {
@@ -342,27 +340,40 @@ void SpotifyService::networkTaskLoop() {
             _lastRefresh  = now ;
     }
 
-        if (now - _lastPoll > Config::PollIntervalMs) {
-            _lastPoll = now;
-            NowPlaying np = getNowPlaying();
-            if (np.valid) {
+        NowPlaying np = getNowPlaying();
+        if (np.valid) {
 
-                // re-anchor the local playback clock (compensate ~half the round trip)
-                _baseProgressMs = np.progress_ms + np.fetch_latency_ms / 2;
-                _baseAtMs       = millis();
-                _playing        = np.is_playing;
+            // re-anchor the local playback clock (compensate ~half the round trip)
+            _baseProgressMs = np.progress_ms + np.fetch_latency_ms / 2;
+            _baseAtMs       = millis();
+            _playing        = np.is_playing;
 
-                bool trackChanged = (np.track != _lastTrack);
-                if (trackChanged) {
-                    _lastTrack = np.track;
-                    Serial.println("\n>>> " + np.track + " - " + np.artist);
-                    getLyrics(np.track, np.artist, np.duration_ms);
-                }
-                AppState::MusicSnapshot current = AppState::getMusic();
-                if (trackChanged || current.playing != np.is_playing ) {
-                    AppState::setMusicTrack(np.track,np.artist,np.is_playing);
-                }
+            bool trackChanged = (np.track != _lastTrack);
+            if (trackChanged) {
+                _lastTrack = np.track;
+                Serial.println("\n>>> " + np.track + " - " + np.artist);
+                AppState::setMusicLyricLine("");  // clear the previous track's line immediately — don't leave stale text up while the new track's lyrics are being fetched
+                getLyrics(np.track, np.artist, np.duration_ms);
             }
+
+            bool hasSyncedLyrics = (_lyricCount > 0);
+
+            AppState::MusicSnapshot current = AppState::getMusic();
+            if (trackChanged || current.playing != np.is_playing || current.hasSyncedLyrics != hasSyncedLyrics) {
+                AppState::setMusicTrack(np.track, np.artist, np.is_playing, hasSyncedLyrics);
+            }
+        } else if (np.nothingPlaying) {
+            // Only act on the transition (was playing -> now isn't) —
+            // otherwise this fires every poll and both spams the log
+            // and re-bumps AppState::music.version for no reason.
+            AppState::MusicSnapshot current = AppState::getMusic();
+            if (current.playing) {
+                Serial.println("[Spotify] Nothing playing");
+                _playing = false;
+                _lastTrack = "";  // so the same track starting again later is correctly treated as a change
+                AppState::setMusicTrack("", "", false, false);
+            }
+
         }
         vTaskDelay(50 / portTICK_PERIOD_MS);   // yield to idle task / feed the watchdog
     }

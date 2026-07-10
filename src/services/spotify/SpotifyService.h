@@ -18,6 +18,8 @@ private:
         int    fetch_latency_ms;
         bool   is_playing;
         bool   valid;
+        bool nothingPlaying;
+
     };
 
     bool refreshAccessToken();
