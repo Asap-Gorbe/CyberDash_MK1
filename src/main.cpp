@@ -14,7 +14,7 @@
 #include "services/spotify/SpotifyService.h"
 #include "hal/Clock.h"
 SerialDisplay display;
-#include "hal/SimulatedBleNavSource.h"
+#include "hal/RealBleNavSource.h"
 #include "services/nav/NavigationService.h"
 Renderer renderer(display);
 
@@ -25,7 +25,7 @@ NavScreen navScreen;
 Screen* screens[] = { &homeScreen, &musicScreen, &navScreen };  // index 0 = Home, by convention
 ScreenManager screenManager(renderer, input, screens, 3);
 SpotifyService spotifyService;
-SimulatedBleNavSource navSource;
+RealBleNavSource navSource;
 NavigationService navigationService(navSource);
 
 

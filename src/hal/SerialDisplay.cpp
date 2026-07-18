@@ -1,9 +1,12 @@
 // SerialDisplay.cpp
 #include "SerialDisplay.h"
+#include "app/Config.h"
 
 void SerialDisplay::begin() {
-    Serial.print("\033[?1049h");  // hide cursor
-    Serial.print("\033[?25l");
+    if (AppConfig::UseAltScreenBuffer) {
+        Serial.print("\033[?1049h");
+    }
+    Serial.print("\033[?25l");  // hide cursor
     queryTermSize();
 }
 

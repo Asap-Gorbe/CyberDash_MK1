@@ -26,6 +26,9 @@ void NavigationService::tick() {
     if (!navDataChanged(data, _lastPublished)) return;  // no real change — don't bump .version for nothing
 
     _lastPublished = data;
+    Serial.printf("[Nav] active=%d isNav=%d eta=\"%s\" duration=\"%s\" distance=\"%s\" title=\"%s\" directions=\"%s\" speed=\"%s\"\n",
+                 data.active, data.isNavigation, data.eta.c_str(), data.duration.c_str(),
+                 data.distance.c_str(), data.title.c_str(), data.directions.c_str(), data.speed.c_str());
 
     AppState::NavSnapshot snapshot;
     snapshot.active = data.active;

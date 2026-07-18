@@ -174,19 +174,26 @@ yet.
   "NavData/NavSnapshot shape"). `pio run` confirmed clean after the
   reshape; the simulator and `NavScreen` build against the new string
   fields.
-    - [ ] **M6 real-hardware step - pending.** Add
+    - [x] **M6 real-hardware step - WIRED, PENDING LIVE DRIVE TEST.** Added
       `fbiego/ChronosESP32` to `platformio.ini` (pulls in `ESP32Time`
       and `NimBLE-Arduino` automatically via its own `library.json`).
-      Install the Chronos app (Android, v3.7.5+ for nav support) on a
-      test phone. Write `RealBleNavSource : public IBleNavSource`
-      wrapping `ChronosESP32::getNavigation()`, gated on
-      `Navigation.isNavigation` so non-nav Chronos traffic (weather,
-      notifications, etc. - the library isn't nav-only) never reaches
-      `AppState::nav`. Swap it in for `SimulatedBleNavSource` in
-      `main.cpp` - by design, nothing above `IBleNavSource` should
-      need to change. Watch real BLE payloads during an actual drive
-      before writing any real branching logic around `title`, whose
-      exact meaning is documented as dual-purpose/app-dependent.
+      Wrote `RealBleNavSource : public IBleNavSource` wrapping
+      `ChronosESP32::getNavigation()` and pumping `_watch.loop()` once
+      per `NavigationService::tick()` (no separate task, same reasoning
+      as the concurrency decision above). `valid` is driven off
+      `isConnected()`, deliberately *not* `isNavigation`, so
+      `NavScreen` doesn't get stuck showing stale directions if nav
+      genuinely ends while the phone stays connected - same bug class
+      SpotifyService's "nothing playing" transition already caught
+      once. Swapped in for `SimulatedBleNavSource` in `main.cpp` -
+      nothing above `IBleNavSource` needed to change, as designed.
+      Found and fixed one build break along the way: `app/Config.h`'s
+      `namespace Config` collided with `ChronosESP32.h`'s own `enum
+      Config` - renamed to `AppConfig` throughout (see decisions log).
+      `pio run` clean. **Still open:** not yet paired with a phone or
+      tested against real BLE traffic - `isConnected()` behaving
+      correctly and what `directions`/`title` actually contain on a
+      live route are both unverified until that happens.
 - [ ] **M5 - Concurrency cleanup.** Formalize networking on core 0 /
   rendering+UI on core 1 with a thread-safe state hand-off (already
   half-true today via the volatile lyric buffer - this milestone makes
@@ -236,7 +243,8 @@ yet.
 | NavData/NavSnapshot shape | **Decided (M6)** | ChronosESP32's `Navigation` struct hands back pre-formatted strings (`eta`, `duration`, `distance`, `title`, `directions`, `speed`), not raw numeric distances - the phone-side app formats them before sending. Reshaped `IBleNavSource::NavData` and `AppState::NavSnapshot` to store those strings directly rather than parsing them back into ints (`distanceRemainingM`/`nextTurnDistanceM` dropped). Same "data-source-first" principle as the mini-map -> HUD scope revision. `title`'s exact semantics are documented as dual-purpose ("distance to next point OR title") and app-dependent - `NavScreen`'s interpretation of it is deliberately left minimal until real BLE traffic from a live drive can confirm what it actually contains. |
 | Nav feature scope | **Revised (M6)** | Original spec was a GTA V-style live mini-map. Replaced with a turn-by-turn HUD (instruction/distance/ETA) since the chosen data source (see above) provides discrete maneuver events, not a continuous position stream - there's no coordinate data to draw a moving map from. Arguably a better in-car display regardless (big clear instruction vs. a tiny moving dot), but a deliberate, real change from the original goal, not an accidental scope-narrowing. |
 | NavigationService concurrency | **Decided (M6)** | Unlike `SpotifyService`, `NavigationService` has no background FreeRTOS task - `IBleNavSource::poll()` is contractually non-blocking (even the real NimBLE backend would buffer internally via its own task and just hand back the latest value), so polling once per `loop()` tick on core 1 is sufficient. Simpler than replicating `SpotifyService`'s core-0 task pattern where it isn't needed. |
-| Wall clock | **Decided** | NTP via `configTzTime()`, wrapped in `hal/Clock` - deliberately NOT built as a swappable interface like `IDisplay`/`IInput`/`IBleNavSource`. Only one real implementation is worth having (the system clock); an abstraction here would be complexity with no payoff, same reasoning as M5's spinlock-over-mutex choice. Timezone is a manually-set POSIX TZ string in `Config::Timezone`, not auto-detected. |
+| `Config` naming collision | **Fixed (M6)** | `app/Config.h`'s `namespace Config` collided with `ChronosESP32.h`'s own `enum Config` (its message-type enum for `setConfigurationCallback`) - both at global scope, so any translation unit including both failed to compile with "redeclared as different kind of symbol." Renamed to `AppConfig` throughout (`Config.h`, `Clock.cpp`, `SpotifyService.cpp`). Worth remembering as a class of risk when adding future third-party libraries: check for identifier collisions with `app/`'s intentionally short, generic namespace names. |
+| Wall clock | **Decided** | NTP via `configTzTime()`, wrapped in `hal/Clock` - deliberately NOT built as a swappable interface like `IDisplay`/`IInput`/`IBleNavSource`. Only one real implementation is worth having (the system clock); an abstraction here would be complexity with no payoff, same reasoning as M5's spinlock-over-mutex choice. Timezone is a manually-set POSIX TZ string in `AppConfig::Timezone`, not auto-detected. |
 | Home screen identity | **Decided** | Home IS the clock/idle face (time as hero element + compact now-playing summary), not a separate menu screen with a clock bolted on. Full live lyrics stay `MusicScreen`'s job - Home only ever shows a one-line summary, keeping "one purpose per screen" intact even though both read `AppState::music`. |
 | SerialDisplay + background logging | **Fixed** | Plain `Serial.println()` calls from background tasks (`SpotifyService`) share the same serial stream as `SerialDisplay`'s absolute-positioned ANSI output. Normal terminal scrolling from those log lines was pushing fixed-row content out of the visible viewport. Fixed via the ANSI alternate screen buffer, enabled once in `SerialDisplay::begin()`. This whole class of problem is specific to sharing one stream for both logs and "screen" output - it goes away entirely once a real TFT exists in M2-b (logs to serial, UI to the physical panel, no shared channel). |
 | Font direction | **Noted, not yet built** | Dot-matrix/LED-style typeface intended (visually in the spirit of Nothing's Ndot font family, NOT using their proprietary asset - the genre predates them and has open alternatives). Purely a HAL-backend concern per `Theme::TextSize` - irrelevant to `SerialDisplay`, real work starts at M2-b once a pixel display with custom bitmap font support exists. |
@@ -256,17 +264,15 @@ yet.
 - [x] ~~Security: rotate Spotify credentials~~ - done; current
   `Secrets.cpp` values have not been committed to git (verified via
   `git check-ignore` before every push since the M2/M3 history reset).
-- [ ] Add `fbiego/ChronosESP32` to `platformio.ini`, install the
-  Chronos app (Android, v3.7.5+ for nav support) on a test phone.
-- [ ] Write `RealBleNavSource : public IBleNavSource` wrapping
-  `ChronosESP32::getNavigation()`, gated on `isNavigation` so
-  non-nav Chronos traffic never reaches `AppState::nav`.
+- [ ] Install the Chronos app (Android, v3.7.5+ for nav support) on a
+  test phone and confirm it pairs with the ESP32.
 - [ ] Watch real BLE payloads during an actual drive to pin down
   `title`'s real meaning (documented as dual-purpose/app-dependent)
   before writing any branching logic in `NavScreen` around it.
-- [ ] Test `RealBleNavSource` against an actual phone - simulator
-  testing only proves the architecture, not real BLE behavior
-  (connection drops, pairing, payload edge cases).
+- [ ] Test `RealBleNavSource` against an actual phone once paired -
+  simulator testing only proves the architecture, not real BLE
+  behavior (connection drops, WiFi/BLE radio contention since both
+  now run concurrently, payload edge cases).
 - [ ] Re-test `HomeScreen` + multi-line rendering end-to-end since the
   alt-screen-buffer fix - not yet confirmed working.
 - [ ] Revert `HomeScreen` from fixed top-row layout back to true
@@ -282,6 +288,13 @@ yet.
   screen header from `hal/`, stop - that's the dependency rule breaking.
 
 ## Changelog
+- **M6 real-hardware step (wired, pending live drive test):** Added
+  `fbiego/ChronosESP32` to `platformio.ini`. Wrote
+  `RealBleNavSource : public IBleNavSource`, swapped in for
+  `SimulatedBleNavSource` in `main.cpp`. Fixed a build-breaking
+  `Config` namespace/enum collision between `app/Config.h` and
+  `ChronosESP32.h` by renaming to `AppConfig`. `pio run` clean.
+  Not yet paired with a phone or tested against real BLE traffic.
 - **M6 (nav data source revised, pre-real-hardware):** Switched planned
   nav BLE source from a CarPlayBLE fork to `fbiego/ChronosESP32` (see
   decisions log). Reshaped `IBleNavSource::NavData` and

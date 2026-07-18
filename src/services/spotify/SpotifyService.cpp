@@ -63,11 +63,20 @@ String asciiOnly(String s) {
     return out;
 }
 
-String skipHeaders(WiFiClientSecure& c) {
+String skipHeaders(WiFiClientSecure& c, long* contentLength = nullptr) {
     String statusLine = c.readStringUntil('\n');
     while (c.connected()) {
         String line = c.readStringUntil('\n');
         if (line == "\r") break;
+            if (contentLength) {
+                String lower = line;
+                lower.toLowerCase();
+                if (lower.startsWith("content-length:")) {
+                    String val = line.substring(String("content-length:").length());
+                    val.trim();
+                    *contentLength = val.toInt();
+                }
+        }
     }
     return statusLine;
 }
@@ -259,8 +268,10 @@ void SpotifyService::parseSyncedLyrics(String synced) {
 
 // minimal HTTPS GET to lrclib.net; returns body on 200, "" otherwise
 String SpotifyService::lrclibGet(String path) {
+    unsigned long t0 = millis();
     _client.setInsecure();
     if (!_client.connect("lrclib.net", 443)) { _client.stop(); return ""; }
+    Serial.printf("[Lyrics]   connect+TLS: %lums\n", millis() - t0);
     _client.setTimeout(10000);
 
     _client.println("GET " + path + " HTTP/1.1");
@@ -274,8 +285,10 @@ String SpotifyService::lrclibGet(String path) {
         if (millis() - t > 8000) { _client.stop(); return ""; }
         delay(10);
     }
-
-    String status = skipHeaders(_client);
+    Serial.printf("[Lyrics]   wait-for-response: %lums\n", millis() - t);
+    long contentLength = -1 ;
+    String status = skipHeaders(_client,&contentLength);
+    Serial.printf("[Lyrics]   contentLength header : %ld\n", contentLength);
     if (status.indexOf("200") < 0) { _client.stop(); return ""; }   // 404 = no match
 
     const size_t MAX_BYTES = 40000;
@@ -289,7 +302,9 @@ String SpotifyService::lrclibGet(String path) {
             t = millis();
         }
         if (resp.length() >= MAX_BYTES) break;
+        if (contentLength > 0 && (long)resp.length() >= contentLength) break;
     }
+    Serial.printf("[Lyrics]   body read: %lums, %d bytes\n", millis() - t0, resp.length());
     _client.stop();
     return resp;
 }
@@ -300,11 +315,13 @@ void SpotifyService::getLyrics(String track, String artist, int durationMs) {
     int durSec    = durationMs / 1000;
     String qTrack = cleanName(track);
     Serial.printf("[Lyrics] \"%s\" by \"%s\" (%ds)\n", qTrack.c_str(), artist.c_str(), durSec);
+    unsigned long t0 = millis();
 
     // 1) exact match by duration — timestamps line up with the playing recording
     String body = lrclibGet("/api/get?track_name=" + urlEncode(qTrack) +
                             "&artist_name=" + urlEncode(artist) +
                             "&duration=" + String(durSec));
+    Serial.printf("[Lyrics] /api/get took %lums\n", millis() - t0);
     String synced = "";
     if (body.length()) {
         int s = body.indexOf('{');
@@ -318,9 +335,11 @@ void SpotifyService::getLyrics(String track, String artist, int durationMs) {
     // 2) fallback: search, then keep the result whose duration matches (±2s)
     if (synced.length() == 0) {
         Serial.println("[Lyrics] No exact match, searching...");
+       unsigned long t1 = millis();
         body = lrclibGet("/api/search?track_name=" + urlEncode(qTrack) +
                          "&artist_name=" + urlEncode(artist));
         synced = pickByDuration(body, durSec);
+        Serial.printf("[Lyrics] /api/search + match took %lums\n", millis() - t1);
     }
 
     if (synced.length() == 0) {
@@ -335,7 +354,7 @@ void SpotifyService::networkTaskLoop() {
     _lastRefresh  = millis();
     for (;;) {
         unsigned long now = millis();
-        if (now - _lastRefresh > Config::TokenRefreshMs) {
+        if (now - _lastRefresh > AppConfig::TokenRefreshMs) {
             refreshAccessToken();
             _lastRefresh  = now ;
     }
@@ -386,7 +405,7 @@ void SpotifyService::tick() {
     if (_playing && _lyricCount > 0 && !_lyricsLocked && now - lastLineCheck > 50) {
         lastLineCheck = now;
 
-        long est = _baseProgressMs + (long)(now - _baseAtMs) + Config::SyncOffsetMs;
+        long est = _baseProgressMs + (long)(now - _baseAtMs) + AppConfig::SyncOffsetMs;
 
         int idx = -1;
         for (int i = 0; i < _lyricCount; i++) {

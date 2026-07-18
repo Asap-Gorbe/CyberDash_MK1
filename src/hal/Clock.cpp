@@ -5,7 +5,7 @@
 namespace Clock {
 
     void begin() {
-        configTzTime(Config::Timezone, "pool.ntp.org", "time.nist.gov");
+        configTzTime(AppConfig::Timezone, "pool.ntp.org", "time.nist.gov");
     }
 
     bool isSynced() {
