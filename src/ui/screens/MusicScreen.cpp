@@ -34,8 +34,7 @@ void MusicScreen::refresh(const AppState::MusicSnapshot& snapshot) {
 
 void MusicScreen::render(Renderer& renderer) {
     renderer.beginFrame();
-    renderer.drawCentered(renderer.height() / 2, _displayText, Theme::TextSize::Hero);
-
+    renderer.drawCentered(renderer.height() / 2, _displayText, Theme::TextSize::Large);
 }
 
 bool MusicScreen::handleInput(InputEvent event) {

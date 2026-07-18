@@ -5,7 +5,7 @@ namespace Theme {
 
     namespace Color {
         constexpr uint16_t Background = 0x0000;
-        constexpr uint16_t Primary    = 0x07E0;
+        constexpr uint16_t Primary    = 0x001F;
         constexpr uint16_t Dim        = 0x03E0;
         constexpr uint16_t Accent     = 0xFFE0;
     }

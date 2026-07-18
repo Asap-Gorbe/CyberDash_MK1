@@ -4,7 +4,7 @@
 #include <ArduinoJson.h>
 #include "app/Secrets.h"
 #include "app/Config.h"
-#include "hal/SerialDisplay.h"
+#include "hal/TftDisplay.h"
 #include "hal/SerialInput.h"
 #include "gfx/Renderer.h"
 #include "ui/ScreenManager.h"
@@ -13,7 +13,7 @@
 #include "ui/screens/NavScreen.h"
 #include "services/spotify/SpotifyService.h"
 #include "hal/Clock.h"
-SerialDisplay display;
+TftDisplay display;
 #include "hal/RealBleNavSource.h"
 #include "services/nav/NavigationService.h"
 Renderer renderer(display);

@@ -89,8 +89,8 @@ cyberdeck-firmware/
       README.md               -> AppState + EventBus land here in M4
    hal/
       IDisplay.h              (abstract display contract)
-      SerialDisplay.h/.cpp    (today's backend - ANSI terminal)
-      (TftDisplay.h/.cpp goes here once hardware is wired - M2-b)
+      SerialDisplay.h/.cpp    (terminal backend - kept for bench debugging)
+      TftDisplay.h/.cpp       (real hardware backend - ILI9488 3.5" SPI panel, M2-b)
       IInput.h                (abstract input contract)
       SerialInput.h/.cpp      (today's backend - keyboard n/s/b)
       IBleNavSource.h         (abstract nav data source contract)
@@ -117,9 +117,9 @@ yet.
 ---
 
 ## Milestone roadmap
-- [ ] **Home screen: clock + now-playing. IN PROGRESS, PENDING FINAL
-  VERIFICATION.** `HomeScreen` is no longer a stub - it's the
-  device's actual idle screen: NTP-synced time (`hal/Clock`, no
+- [ ] **Home screen: clock + now-playing. RE-VERIFIED ON REAL HARDWARE,
+  CENTERING STILL IMPERFECT.** `HomeScreen` is no longer a stub - it's
+  the device's actual idle screen: NTP-synced time (`hal/Clock`, no
   interface - single real implementation) plus a compact
   now-playing summary read from `AppState::music`.
   Required a real fix to the render pipeline: `SerialDisplay`
@@ -146,15 +146,43 @@ yet.
        `Serial.println()`) scrolling the terminal viewport out from
        under `SerialDisplay`'s absolute-positioned rows on every poll.
        Fixed by switching `SerialDisplay` to the ANSI alternate screen
-       buffer (`\033[?1049h`) - a fixed, non-scrolling grid, same
-       mechanism `vim`/`htop`/`less` use.
-       **Still open:** `HomeScreen` currently uses fixed top-row layout
-       as an interim workaround, not true vertical centering - revert
-       pinned until the alt-screen-buffer fix is verified on device AND
-       real LCD hardware (M2-b) exists, since pixel-coordinate centering
-       on real glass won't have the terminal-height-unreliability problem
-       that motivated the workaround. Not yet re-tested end-to-end since
-       the alt-screen-buffer fix specifically.
+       buffer (`\033[?1049h`), gated behind `AppConfig::UseAltScreenBuffer`
+       so it can be flipped off temporarily to read scrollable debug logs
+       (e.g. Chronos/lyrics timing output) without losing the tested
+       fixed-screen behavior.
+       Now tested on the real TFT (see M2-b below) rather than only
+       `SerialDisplay` - text draws and wraps correctly, but the vertical
+       centering that `TftDisplay::drawText` computes for multi-line text
+       isn't quite landing right yet on real glass ("not quite centered
+       but it works," per live test). Left as-is for now rather than
+       chased further blind - worth a closer pixel-math look next time
+       `HomeScreen` specifically is on the table.
+- [x] **M2-b - Real display hardware. WIRED AND VERIFIED.** Identified
+  the panel as an ILI9488 480x320 3.5" SPI module (exact part
+  `HSD035577D3` didn't turn up in any search - identification was by
+  matching pin layout against known ILI9488 boards, then confirmed
+  for real via a throwaway `TFT_eSPI` color-fill test sketch, not
+  guessed and left unverified). Wired point-to-point with jumpers on
+  the ESP32 WROOM32's default VSPI pins (CS 15, RESET 4, DC 2, MOSI
+  23, SCK 18, MISO 19); backlight wired straight to 3.3V rather than
+  a GPIO, since backlight current draw can exceed a GPIO's safe
+  rating. `TFT_eSPI` configured entirely via `platformio.ini`
+  `build_flags` (not by editing the library's own `User_Setup.h`,
+  which would be silently lost since `.pio/` is gitignored). Wrote
+  `TftDisplay : public IDisplay`, swapped in for `SerialDisplay` in
+  `main.cpp` - nothing above `IDisplay` needed to change, as designed.
+  Found and fixed a real bug during this: `TFT_eSPI`'s built-in text
+  auto-wrap restarts every overflow line at the left margin, breaking
+  centering on any text wider than the screen. Replaced with manual
+  two-pass wrapping in `TftDisplay::drawText` - first pass measures
+  line count, second pass draws the whole block centered as a unit -
+  see decisions log ("TftDisplay text wrapping"). `Theme::Color::Primary`
+  changed from green to blue per live preference; `MusicScreen` dropped
+  from `Hero` to `Large` text size since full lyric sentences are
+  longer than the short labels `Hero` was sized for. `SerialDisplay`
+  kept in the tree, unreferenced, for bench debugging without hardware
+  attached.
+
 - [ ] **M6 - NavigationService + turn-by-turn HUD. SKELETON TESTED,
   REAL HARDWARE PENDING.** Built `hal/IBleNavSource` (same shape as
   `IDisplay`/`IInput`) with a `SimulatedBleNavSource` backend, so
@@ -230,8 +258,8 @@ yet.
 
 | Decision | Status | Notes |
 |---|---|---|
-| Renderer approach | **Leaning custom thin layer over TFT_eSPI**, not LVGL | Sparse/whitespace-heavy retro look fights LVGL's default density. Big anti-aliased fonts are the tradeoff - revisit if that becomes painful. |
-| Display panel/driver | **Not yet chosen - display not wired up** | Need controller chip (ST7789/ILI9341/GC9A01/etc.) + resolution before M2-b. |
+| Renderer approach | **Decided** | Custom thin layer over `TFT_eSPI`, not LVGL - confirmed in practice once real hardware arrived, not just a plan. Sparse/whitespace-heavy retro look fights LVGL's default density. `TftDisplay` implements `IDisplay` directly against `TFT_eSPI`'s primitives; no intermediate widget system. |
+| Display panel/driver | **Decided (M2-b)** | Panel is a 3.5" 480x320 4-wire SPI module, exact part marked `HSD035577D3` (not found documented anywhere by that code - likely an internal glass part number, not a sellable SKU). Identified as **ILI9488** by pin-layout pattern-matching against known modules, then confirmed for real via a `TFT_eSPI` color-fill test on actual hardware before committing `TftDisplay` to the assumption - not left as an unverified guess. |
 | Secrets handling | **Decided (M2)** | `app/Secrets.h` gitignored, `app/Secrets.example.h` committed as template. |
 | Concurrency model | **Decided (M1, formalized M5)** | Networking on core 0, render/UI on core 1. Currently uses raw `volatile`s as the hand-off; M5 replaces this with `AppState`. |
 | Render invalidation | **Decided (M3)** | `Screen::update()` returns `bool` (changed this tick?); `ScreenManager` only calls `render()` on enter/switch or when `update()` is true. Render-every-tick was tried first and caused a visible glitch/flicker on `SerialDisplay` at ~150-200Hz. This dirty-flag approach is the one carried forward into the TFT backend, not revisited. |
@@ -249,6 +277,9 @@ yet.
 | SerialDisplay + background logging | **Fixed** | Plain `Serial.println()` calls from background tasks (`SpotifyService`) share the same serial stream as `SerialDisplay`'s absolute-positioned ANSI output. Normal terminal scrolling from those log lines was pushing fixed-row content out of the visible viewport. Fixed via the ANSI alternate screen buffer, enabled once in `SerialDisplay::begin()`. This whole class of problem is specific to sharing one stream for both logs and "screen" output - it goes away entirely once a real TFT exists in M2-b (logs to serial, UI to the physical panel, no shared channel). |
 | Font direction | **Noted, not yet built** | Dot-matrix/LED-style typeface intended (visually in the spirit of Nothing's Ndot font family, NOT using their proprietary asset - the genre predates them and has open alternatives). Purely a HAL-backend concern per `Theme::TextSize` - irrelevant to `SerialDisplay`, real work starts at M2-b once a pixel display with custom bitmap font support exists. |
 | Retro animations | **Noted, not yet built** | Mentioned as a future direction for `HomeScreen`/idle-screen polish. No design work done yet - flagged here purely so it isn't forgotten between now and whenever `ui/components` gets built out. |
+| TFT_eSPI configuration | **Decided (M2-b)** | Configured entirely via `platformio.ini` `build_flags` (`-DUSER_SETUP_LOADED`, `-DILI9488_DRIVER`, pin defs, etc.), not by editing `TFT_eSPI`'s own `User_Setup.h` inside the library. `.pio/` is gitignored, so editing library files directly would silently vanish on any clean rebuild - build flags are the only form of this config that's actually committed and reproducible. |
+| TftDisplay text wrapping | **Decided (M2-b)** | `TFT_eSPI`'s built-in auto-wrap restarts every overflow line at the left margin, which broke centering the moment a lyric line was wider than the screen. `TftDisplay::drawText` disables that (`setTextWrap(false)`) and does its own two-pass wrap instead: first pass splits text into lines and counts them, second pass draws the whole block centered as a unit around the given `y`. Vertical centering still imperfect on real hardware as of the last test - noted in the M2-b roadmap entry, not yet root-caused further. |
+| LRCLIB request latency | **Fixed** | `/api/get` requests were taking 5.6-10.4s consistently, regardless of response size (281 bytes and 9KB took nearly identical time) - traced via staged `millis()` instrumentation to the body-read loop waiting for the TCP socket to fully close (`Connection: close`) rather than stopping once the actual content had arrived. Fixed by parsing the response's `Content-Length` header and exiting the read loop once that many bytes are in hand - cut ~2.7s off every request, confirmed via before/after timing, not assumed. A prior attempt to speed this up by trying `/api/get-cached` first made things *worse* (extra sequential round-trip on every cache miss) and was reverted - real instrumentation beat reasoning from API docs alone. Remaining latency (TLS handshake ~2.6-3.0s, LRCLIB's own response time 2.3-6.5s) is outside firmware control - confirmed lrclib.net does not serve plain HTTP (issues a 301 redirect to HTTPS), so the TLS cost can't be avoided either. |
 
 ## Open questions / TODO before next milestones
 
@@ -256,14 +287,20 @@ yet.
   the original `main.cpp` were exposed in plaintext - rotate them in
   the Spotify Developer Dashboard before treating `Secrets.h` as the
   real credential store.
-- [ ] Confirm display panel + driver chip (blocks M2-b).
 - [ ] Finalize input method: touch confirmed on the LCD, buttons possibly
   added alongside it. Not blocking anymore (`IInput` abstracts it),
   but needs a `TouchInput`/`ButtonInput` backend written once decided.
-- [ ] Decide GPS module (blocks M6, not urgent yet).
+  More pressing now that the TFT is wired and `SerialInput` (keyboard
+  n/s/b over USB serial) is the only way to switch screens - fine on a
+  desk, not viable once this is actually mounted in the car.
+- [x] ~~Decide GPS module~~ - moot; superseded by the Chronos/BLE
+  relay decision (see decisions log: "Navigation data source"), no
+  GPS module is needed.
 - [x] ~~Security: rotate Spotify credentials~~ - done; current
   `Secrets.cpp` values have not been committed to git (verified via
   `git check-ignore` before every push since the M2/M3 history reset).
+- [x] ~~Confirm display panel + driver chip~~ - done (M2-b): ILI9488,
+  see decisions log.
 - [ ] Install the Chronos app (Android, v3.7.5+ for nav support) on a
   test phone and confirm it pairs with the ESP32.
 - [ ] Watch real BLE payloads during an actual drive to pin down
@@ -273,10 +310,17 @@ yet.
   simulator testing only proves the architecture, not real BLE
   behavior (connection drops, WiFi/BLE radio contention since both
   now run concurrently, payload edge cases).
-- [ ] Re-test `HomeScreen` + multi-line rendering end-to-end since the
-  alt-screen-buffer fix - not yet confirmed working.
-- [ ] Revert `HomeScreen` from fixed top-row layout back to true
-  vertical centering - pinned until real LCD hardware exists (M2-b).
+- [ ] Revisit `TftDisplay::drawText`'s vertical centering math -
+  currently off on real hardware ("not quite centered but it works"),
+  not yet root-caused.
+- [ ] Strip the temporary `[Nav]` field-dump logging in
+  `NavigationService::tick()` and the per-stage timing
+  `Serial.printf()`s in `SpotifyService::lrclibGet()`/`getLyrics()`
+  once both are no longer actively needed - both were added as
+  deliberately temporary diagnostics, not permanent logging.
+- [ ] Batch of smaller `NavScreen`/logic bugs mentioned but explicitly
+  deferred until after the screen was wired - now that it is, worth
+  revisiting.
 
 ## Conventions
 
@@ -288,6 +332,39 @@ yet.
   screen header from `hal/`, stop - that's the dependency rule breaking.
 
 ## Changelog
+- **M2-b (wired and verified):** Identified the panel as ILI9488
+  (480x320, 3.5" SPI, part marked `HSD035577D3`) by pin-layout
+  matching, confirmed for real via a `TFT_eSPI` color-fill test before
+  committing to it. Wired point-to-point on the WROOM32's default
+  VSPI pins; backlight tied straight to 3.3V rather than a GPIO.
+  `TFT_eSPI` configured via `platformio.ini` build_flags, not the
+  library's own `User_Setup.h` (would be lost - `.pio/` is
+  gitignored). Wrote `TftDisplay : public IDisplay`, swapped in for
+  `SerialDisplay` in `main.cpp`. Fixed a real bug found on real
+  hardware: `TFT_eSPI`'s built-in auto-wrap broke text centering on
+  any line wider than the screen - replaced with a manual two-pass
+  wrap-then-center-as-a-block approach in `TftDisplay::drawText`.
+  `Theme::Color::Primary` changed green -> blue; `MusicScreen` text
+  size dropped `Hero` -> `Large` for full lyric sentences. Vertical
+  centering still imperfect, tracked as an open TODO rather than
+  chased blind. `SerialDisplay` kept in the tree for bench debugging.
+- **Lyrics latency fix:** Diagnosed `/api/get` requests consistently
+  taking 5.6-10.4s via staged `millis()` instrumentation added
+  specifically to find the real bottleneck rather than guess at one.
+  Root cause: the body-read loop waited for the TCP socket to fully
+  close instead of stopping once the expected content had arrived.
+  Fixed by parsing the `Content-Length` header and exiting once that
+  many bytes are read - confirmed ~2.7s saved per request via
+  before/after timing. A prior attempt (trying `/api/get-cached`
+  first) made things worse and was reverted before the real cause was
+  found. Confirmed separately that lrclib.net doesn't serve plain
+  HTTP (301 redirect to HTTPS), so the remaining TLS-handshake cost
+  can't be avoided.
+- **Terminal scroll toggle:** Added `AppConfig::UseAltScreenBuffer` so
+  the alternate-screen-buffer lock (which intentionally disables
+  terminal scrollback for `SerialDisplay`'s fixed-row output) can be
+  flipped off temporarily to read scrollable debug logs, without
+  permanently changing the already-tested default behavior.
 - **M6 real-hardware step (wired, pending live drive test):** Added
   `fbiego/ChronosESP32` to `platformio.ini`. Wrote
   `RealBleNavSource : public IBleNavSource`, swapped in for
